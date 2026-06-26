@@ -7,7 +7,7 @@ import 'dotenv/config';
 import { Kafka } from 'kafkajs';
 import { loadCrossings } from './crossings.js';
 import { parseMessage } from './parser.js';
-import { processSchedule, processForecast, processDeactivated, runCleanup } from './predictions.js';
+import { processPrediction, processDeactivated, runCleanup } from './predictions.js';
 
 const kafka = new Kafka({
   clientId: 'level-crossing-listener',
@@ -75,44 +75,19 @@ async function startListener() {
           return;
         }
 
-        // DEBUG: Log the structure of the first 3 messages so we can see exactly
-        // what Darwin is sending and fix the parser accordingly
-        if (messageCount <= 3) {
-          console.log(`[debug] Message ${messageCount} keys: ${Object.keys(outerMessage).join(', ')}`);
-          console.log(`[debug] Message ${messageCount} bytes type: ${typeof outerMessage.bytes}`);
-          const bytesPreview = typeof outerMessage.bytes === 'string'
-            ? outerMessage.bytes.substring(0, 500)
-            : JSON.stringify(outerMessage.bytes || outerMessage).substring(0, 500);
-          console.log(`[debug] Message ${messageCount} bytes preview: ${bytesPreview}`);
-        }
-
-        // The actual Darwin data is in the 'bytes' field as an escaped string
         const bytesField = outerMessage?.bytes;
         if (!bytesField) return;
 
-        // Parse the Darwin Push Port message
         const records = parseMessage(bytesField);
-
-        // DEBUG: Log parse results for first 10 messages
-        if (messageCount <= 10) {
-          console.log(`[debug] Message ${messageCount}: parseMessage returned ${records.length} records`);
-        }
-
         if (!records.length) return;
 
         relevantCount += records.length;
 
         for (const record of records) {
-          switch (record.type) {
-            case 'schedule':
-              await processSchedule(record);
-              break;
-            case 'forecast':
-              await processForecast(record);
-              break;
-            case 'deactivated':
-              await processDeactivated(record);
-              break;
+          if (record.type === 'deactivated') {
+            await processDeactivated(record);
+          } else {
+            await processPrediction(record);
           }
         }
 
