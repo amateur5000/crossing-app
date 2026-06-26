@@ -1,6 +1,7 @@
 // ============================================================
 // src/predictions.js
 // Writes train timing data to the Supabase predictions table.
+// Captures arrival, departure, pass times and direction.
 // ============================================================
 
 import { supabase } from './supabase.js';
@@ -8,7 +9,6 @@ import { getCrossingsForTiploc } from './crossings.js';
 
 // ============================================================
 // Process a schedule or forecast record
-// Upserts a prediction row for each relevant crossing
 // ============================================================
 
 export async function processPrediction(record) {
@@ -26,14 +26,16 @@ export async function processPrediction(record) {
       new Date(predictedTime).getTime() - crossing.lead_time_seconds * 1000
     ).toISOString();
 
+    // Estimate opening — 1 minute after predicted pass (to be refined)
     const opensAt = new Date(
       new Date(predictedTime).getTime() + 60 * 1000
     ).toISOString();
 
     // Determine status
     let status = 'scheduled';
-    if (record.timeBasis === 'actual') status = 'actual';
-    else if (record.timeBasis === 'predicted') {
+    if (record.timeBasis === 'actual') {
+      status = 'actual';
+    } else if (record.timeBasis === 'predicted') {
       const scheduledMs = new Date(scheduledTime).getTime();
       const predictedMs = new Date(predictedTime).getTime();
       const delaySeconds = (predictedMs - scheduledMs) / 1000;
@@ -43,16 +45,21 @@ export async function processPrediction(record) {
     const { error } = await supabase
       .from('predictions')
       .upsert({
-        crossing_id: crossing.crossing_id,
-        train_id: record.trainId,
-        operator: record.operator,
-        scheduled_time: scheduledTime,
-        predicted_time: predictedTime,
-        closes_at: closesAt,
-        opens_at: opensAt,
+        crossing_id:      crossing.crossing_id,
+        train_id:         record.trainId,
+        operator:         record.operator || null,
+        scheduled_time:   scheduledTime,
+        predicted_time:   predictedTime,
+        arrival_time:     record.arrivalTime   || null,
+        departure_time:   record.departureTime || null,
+        pass_time:        record.passTime      || null,
+        is_stopping:      record.isStopping    ?? false,
+        direction:        record.direction     || null,
+        closes_at:        closesAt,
+        opens_at:         opensAt,
         status,
-        time_basis: record.timeBasis,
-        last_updated: new Date().toISOString()
+        time_basis:       record.timeBasis,
+        last_updated:     new Date().toISOString()
       }, {
         onConflict: 'crossing_id,train_id',
         ignoreDuplicates: false
@@ -61,7 +68,9 @@ export async function processPrediction(record) {
     if (error) {
       console.error(`[predictions] Failed to upsert train ${record.trainId} at ${crossing.crossing_name}:`, error.message);
     } else {
-      console.log(`[predictions] ✓ Train ${record.trainId} at ${crossing.crossing_name} — ${record.timeBasis} ${predictedTime} (${status})`);
+      const stopLabel = record.isStopping ? 'stopping' : 'pass-through';
+      const dirLabel  = record.direction  || 'unknown direction';
+      console.log(`[predictions] ✓ Train ${record.trainId} at ${crossing.crossing_name} — ${stopLabel}, ${dirLabel}, ${record.timeBasis} ${predictedTime} (${status})`);
     }
   }
 }
@@ -74,8 +83,8 @@ export async function processDeactivated(record) {
   const { error } = await supabase
     .from('predictions')
     .update({
-      status: 'cancelled',
-      time_basis: 'actual',
+      status:       'cancelled',
+      time_basis:   'actual',
       last_updated: new Date().toISOString()
     })
     .eq('train_id', record.trainId);
@@ -86,7 +95,7 @@ export async function processDeactivated(record) {
 }
 
 // ============================================================
-// Nightly cleanup — deletes old data via Supabase function
+// Nightly cleanup
 // ============================================================
 
 export async function runCleanup() {
