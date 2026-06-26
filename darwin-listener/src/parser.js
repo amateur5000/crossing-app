@@ -1,22 +1,20 @@
 // ============================================================
 // src/parser.js
 // Parses Darwin Push Port v18 JSON messages.
-// Darwin uses TIPLOC codes and working times (wta/wtd/wtp).
+// Extracts arrival, departure and pass times separately.
+// Determines direction of travel from schedule origin/destination.
 // ============================================================
 
 import { isTiplocMonitored } from './crossings.js';
 
 // ============================================================
 // Main parse function
-// Takes the bytes string from a Kafka message and returns
-// relevant train location records for monitored TIPLOCs.
 // ============================================================
 
 export function parseMessage(bytesField) {
   const results = [];
 
   try {
-    // Parse the bytes field — it arrives as a JSON string
     let parsed;
     if (typeof bytesField === 'string') {
       parsed = JSON.parse(bytesField);
@@ -24,8 +22,6 @@ export function parseMessage(bytesField) {
       parsed = bytesField;
     }
 
-    // Darwin Push Port v18 structure:
-    // { ts: timestamp, version: "18.0", uR: { updateOrigin: "...", TS: {...} } }
     const uR = parsed?.uR;
     if (!uR) return results;
 
@@ -69,8 +65,6 @@ export function parseMessage(bytesField) {
 // ============================================================
 // Extract from TS (Train Status) update messages
 // These contain real-time Darwin predictions
-// Darwin sends working times: wta, wtd, wtp
-// and estimated times: arr.et, dep.et, pass.et
 // ============================================================
 
 function extractFromTS(ts, messageTimestamp) {
@@ -79,69 +73,68 @@ function extractFromTS(ts, messageTimestamp) {
 
   const trainId = ts.rid;
   const operator = ts.toc;
-
   if (!trainId) return results;
 
-  // Location can be a single object or an array
   const locations = ts.Location;
   if (!locations) return results;
   const locArray = Array.isArray(locations) ? locations : [locations];
 
+  // Determine direction from the full location sequence
+  // We look at the first and last TIPLOCs in the message to infer direction
+  const direction = inferDirection(locArray);
+
   for (const loc of locArray) {
     const tiploc = loc.tpl;
-    if (!tiploc) continue;
-
-    // Check if this TIPLOC is one we're monitoring
-    if (!isTiplocMonitored(tiploc)) continue;
+    if (!tiploc || !isTiplocMonitored(tiploc)) continue;
 
     console.log(`[parser] Found monitored TIPLOC: ${tiploc} for train ${trainId}`);
 
-    // Extract times — Darwin uses these fields:
-    // wta/wtd/wtp = working timetable times (scheduled)
-    // arr.et / dep.et / pass.et = estimated times (predicted)
-    // arr.at / dep.at / pass.at = actual times (confirmed)
+    // ---- Arrival times ----
+    const arr = loc.arr || {};
+    const arrivalTime =
+      (arr.at ? toISO(arr.at) : null) ||   // Actual arrival
+      (arr.et ? toISO(arr.et) : null) ||   // Estimated arrival
+      (loc.wta ? toISO(loc.wta) : null);   // Working timetable arrival
 
-    const arr  = loc.arr  || {};
-    const dep  = loc.dep  || {};
+    // ---- Departure times ----
+    const dep = loc.dep || {};
+    const departureTime =
+      (dep.at ? toISO(dep.at) : null) ||   // Actual departure
+      (dep.et ? toISO(dep.et) : null) ||   // Estimated departure
+      (loc.wtd ? toISO(loc.wtd) : null);   // Working timetable departure
+
+    // ---- Pass times (non-stopping trains) ----
     const pass = loc.pass || {};
+    const passTime =
+      (pass.at ? toISO(pass.at) : null) || // Actual pass
+      (pass.et ? toISO(pass.et) : null) || // Estimated pass
+      (loc.wtp ? toISO(loc.wtp) : null);   // Working timetable pass
 
-    // Scheduled times (working timetable)
-    const wta  = loc.wta  || null;
-    const wtd  = loc.wtd  || null;
-    const wtp  = loc.wtp  || null;
+    // ---- Determine if train stops here ----
+    // A train stops if it has arrival AND departure times (not just a pass)
+    const isStopping = !!(arrivalTime && departureTime) || (!passTime && !!(arrivalTime || departureTime));
 
-    // Predicted times
-    const eta  = arr.et   || null;
-    const etd  = dep.et   || null;
-    const etp  = pass.et  || null;
-
-    // Actual times
-    const ata  = arr.at   || null;
-    const atd  = dep.at   || null;
-    const atp  = pass.at  || null;
-
-    // Determine best predicted time (actual > estimated > scheduled)
-    // Priority: pass > departure > arrival (for crossing purposes)
+    // ---- Scheduled time (working timetable) ----
     const scheduledTime =
-      (wtp ? toISO(wtp) : null) ||
-      (wtd ? toISO(wtd) : null) ||
-      (wta ? toISO(wta) : null);
+      (loc.wtp ? toISO(loc.wtp) : null) ||
+      (loc.wtd ? toISO(loc.wtd) : null) ||
+      (loc.wta ? toISO(loc.wta) : null);
 
+    // ---- Best predicted time for crossing closure calculation ----
+    // For crossing: pass time for non-stopping, arrival time for stopping
+    // (crossing goes down before train arrives, not when it departs)
     const predictedTime =
-      (atp ? toISO(atp) : null) ||
-      (etp ? toISO(etp) : null) ||
-      (atd ? toISO(atd) : null) ||
-      (etd ? toISO(etd) : null) ||
-      (ata ? toISO(ata) : null) ||
-      (eta ? toISO(eta) : null) ||
+      passTime ||
+      arrivalTime ||
+      departureTime ||
       scheduledTime;
 
-    // Determine time basis
+    // ---- Time basis ----
     let timeBasis = 'scheduled';
-    if (atp || atd || ata) timeBasis = 'actual';
-    else if (etp || etd || eta) timeBasis = 'predicted';
+    if (pass.at || dep.at || arr.at) timeBasis = 'actual';
+    else if (pass.et || dep.et || arr.et) timeBasis = 'predicted';
 
-    if (!scheduledTime && !predictedTime) continue;
+    if (!predictedTime) continue;
 
     results.push({
       type: 'forecast',
@@ -150,6 +143,11 @@ function extractFromTS(ts, messageTimestamp) {
       tiploc,
       scheduledTime,
       predictedTime,
+      arrivalTime,
+      departureTime,
+      passTime,
+      isStopping,
+      direction,
       timeBasis,
       lastUpdated: messageTimestamp || new Date().toISOString()
     });
@@ -160,7 +158,6 @@ function extractFromTS(ts, messageTimestamp) {
 
 // ============================================================
 // Extract from schedule records
-// These contain the full planned timetable for a train
 // ============================================================
 
 function extractFromSchedule(schedule) {
@@ -171,8 +168,16 @@ function extractFromSchedule(schedule) {
   const operator = schedule.toc;
   if (!trainId) return results;
 
-  // Schedule locations use OR (origin), IP (intermediate), DT (destination), PP (pass)
-  const locationTypes = ['OR', 'IP', 'DT', 'PP', 'OPOR', 'OPIP', 'OPDT'];
+  // Get all locations in sequence to infer direction
+  const allLocations = [];
+  const locationTypes = ['OR', 'OPOR', 'IP', 'OPIP', 'PP', 'DT', 'OPDT'];
+  for (const locType of locationTypes) {
+    if (!schedule[locType]) continue;
+    const locs = Array.isArray(schedule[locType]) ? schedule[locType] : [schedule[locType]];
+    allLocations.push(...locs);
+  }
+
+  const direction = inferDirection(allLocations);
 
   for (const locType of locationTypes) {
     if (!schedule[locType]) continue;
@@ -184,15 +189,18 @@ function extractFromSchedule(schedule) {
 
       console.log(`[parser] Schedule: found monitored TIPLOC ${tiploc} for train ${trainId}`);
 
-      // Working timetable times
-      const wta = loc.wta || null;
-      const wtd = loc.wtd || null;
-      const wtp = loc.wtp || null;
+      const arrivalTime   = loc.wta ? toISO(loc.wta) : null;
+      const departureTime = loc.wtd ? toISO(loc.wtd) : null;
+      const passTime      = loc.wtp ? toISO(loc.wtp) : null;
+
+      // PP = passing point (non-stopping)
+      const isStopping = locType !== 'PP' && locType !== 'OPIP';
 
       const scheduledTime =
-        (wtp ? toISO(wtp) : null) ||
-        (wtd ? toISO(wtd) : null) ||
-        (wta ? toISO(wta) : null);
+        passTime || departureTime || arrivalTime;
+
+      const predictedTime =
+        passTime || arrivalTime || departureTime || scheduledTime;
 
       if (!scheduledTime) continue;
 
@@ -202,7 +210,12 @@ function extractFromSchedule(schedule) {
         operator,
         tiploc,
         scheduledTime,
-        predictedTime: scheduledTime,
+        predictedTime,
+        arrivalTime,
+        departureTime,
+        passTime,
+        isStopping,
+        direction,
         timeBasis: 'scheduled'
       });
     }
@@ -212,13 +225,40 @@ function extractFromSchedule(schedule) {
 }
 
 // ============================================================
+// Infer direction from location sequence
+// London terminus TIPLOCs are used as reference points.
+// If the train's first location is a London terminus, it's outbound.
+// If the last location is a London terminus, it's inbound.
+// ============================================================
+
+// Key London terminus and inner TIPLOCs on the South Western Main Line
+const LONDON_TIPLOCS = new Set([
+  'WTRLOO',   // London Waterloo
+  'CLPHMJC',  // Clapham Junction
+  'CLPHMJM',  // Clapham Junction (main)
+  'CLPHMJW',  // Clapham Junction (Windsor lines)
+  'VAUXHLM',  // Vauxhall
+]);
+
+function inferDirection(locations) {
+  if (!locations || locations.length === 0) return null;
+
+  const firstTiploc = locations[0]?.tpl;
+  const lastTiploc  = locations[locations.length - 1]?.tpl;
+
+  if (firstTiploc && LONDON_TIPLOCS.has(firstTiploc)) return 'outbound';
+  if (lastTiploc  && LONDON_TIPLOCS.has(lastTiploc))  return 'inbound';
+
+  return null; // Direction unknown
+}
+
+// ============================================================
 // Helper: convert HH:MM time string to full ISO timestamp
-// Darwin sends working times as HH:MM relative to today
 // ============================================================
 
 function toISO(timeStr) {
   if (!timeStr) return null;
-  if (timeStr.includes('T')) return timeStr; // Already ISO
+  if (timeStr.includes('T')) return timeStr;
 
   const now = new Date();
   const [hours, minutes] = timeStr.split(':').map(Number);
@@ -226,7 +266,7 @@ function toISO(timeStr) {
   const result = new Date(now);
   result.setHours(hours, minutes, 0, 0);
 
-  // If the time is more than 6 hours in the past, assume it's tomorrow
+  // If more than 6 hours in the past, assume next day
   if (result < new Date(now.getTime() - 6 * 60 * 60 * 1000)) {
     result.setDate(result.getDate() + 1);
   }
