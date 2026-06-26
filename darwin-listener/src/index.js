@@ -25,7 +25,15 @@ const kafka = new Kafka({
 });
 
 const consumer = kafka.consumer({
-  groupId: process.env.KAFKA_GROUP_ID
+  groupId: process.env.KAFKA_GROUP_ID,
+  // Increase timeouts to prevent rebalancing when processing takes longer
+  sessionTimeout: 60000,      // 60 seconds (default is 30s)
+  heartbeatInterval: 10000,   // Send heartbeat every 10 seconds
+  maxWaitTimeInMs: 5000,      // Max time to wait for messages
+  retry: {
+    initialRetryTime: 3000,
+    retries: 10
+  }
 });
 
 let messageCount = 0;
@@ -57,6 +65,8 @@ async function startListener() {
   console.log('============================================================');
 
   await consumer.run({
+    // Allow more time per message to avoid rebalancing during Supabase writes
+    eachMessageTimeout: 30000,
     eachMessage: async ({ topic, partition, message }) => {
       messageCount++;
 
