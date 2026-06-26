@@ -1,0 +1,54 @@
+/* app/globals.css */
+/* ============================================================
+   Level Crossing Watch — Design System
+   Palette inspired by UK railway signalling:
+   - Signal green / signal red for crossing status
+   - Dark charcoal background (night-readable on mobile)
+   - Monospaced data type for times (feels functional/precise)
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  /* Colours */
+  --green:        #00C853;   /* Signal green — crossing open */
+  --green-dim:    #00873A;   /* Darker green for text */
+  --red:          #D50000;   /* Signal red — crossing closed */
+  --red-dim:      #FF5252;   /* Lighter red for text on dark */
+  --amber:        #FF6D00;   /* Amber — delayed */
+  --bg:           #0F1117;   /* Near-black background */
+  --surface:      #1A1D27;   /* Card surface */
+  --surface-2:    #22263A;   /* Slightly lighter surface */
+  --border:       #2E3347;   /* Subtle border */
+  --text:         #E8EAF0;   /* Primary text */
+  --text-dim:     #8B8FA8;   /* Secondary text */
+  --text-dimmer:  #4E5268;   /* Tertiary / labels */
+
+  /* Typography */
+  --font-body:    'Inter', sans-serif;
+  --font-mono:    'JetBrains Mono', monospace;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background:  var(--bg);
+  color:       var(--text);
+  font-family: var(--font-body);
+  line-height: 1.5;
+  min-height:  100vh;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
