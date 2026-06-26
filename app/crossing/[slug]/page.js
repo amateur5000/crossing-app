@@ -2,15 +2,10 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import TimelineBar from '../../../components/TimelineBar'
+import TimelineBar, { mergeClosures } from '../../../components/TimelineBar'
 
-// Crossing slug -> database ID mapping
-// Expand this as more crossings are added
-const CROSSING_MAP = {
-  'mortlake': 1,
-}
-
-const REFRESH_INTERVAL_MS = 30 * 1000 // 30 seconds
+const CROSSING_MAP = { 'mortlake': 1 }
+const REFRESH_INTERVAL_MS = 30 * 1000
 
 export default function CrossingPage({ params }) {
   const crossingId = CROSSING_MAP[params.slug]
@@ -22,7 +17,6 @@ export default function CrossingPage({ params }) {
 
   const fetchData = useCallback(async () => {
     if (!crossingId) return
-
     try {
       const res = await fetch(`/api/crossing?id=${crossingId}`)
       if (!res.ok) throw new Error(`API error ${res.status}`)
@@ -37,12 +31,7 @@ export default function CrossingPage({ params }) {
     }
   }, [crossingId])
 
-  // Initial fetch
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
-
-  // Auto-refresh every 30 seconds
+  useEffect(() => { fetchData() }, [fetchData])
   useEffect(() => {
     const interval = setInterval(fetchData, REFRESH_INTERVAL_MS)
     return () => clearInterval(interval)
@@ -53,7 +42,12 @@ export default function CrossingPage({ params }) {
   if (error)       return <ErrorScreen error={error} onRetry={fetchData} />
 
   const { crossing, predictions, fetchedAt } = data
-  const status = getCrossingStatus(predictions, fetchedAt)
+  const now    = new Date(fetchedAt)
+  const endTime = new Date(now.getTime() + 30 * 60 * 1000)
+
+  // Merge closures for both status summary and display
+  const merged = mergeClosures(predictions, now, endTime)
+  const status = getCrossingStatus(merged, now)
 
   return (
     <main style={styles.main}>
@@ -67,7 +61,7 @@ export default function CrossingPage({ params }) {
         </div>
       </header>
 
-      {/* Status pill */}
+      {/* Status */}
       <section style={styles.section}>
         <div style={{
           ...styles.statusPill,
@@ -76,8 +70,6 @@ export default function CrossingPage({ params }) {
           <span style={styles.statusDot} />
           <span style={styles.statusText}>{status.isOpen ? 'OPEN' : 'CLOSED'}</span>
         </div>
-
-        {/* Plain English summary */}
         <p style={styles.summary}>{status.summary}</p>
       </section>
 
@@ -86,55 +78,50 @@ export default function CrossingPage({ params }) {
         <h2 style={styles.sectionLabel}>Next 30 minutes</h2>
         <TimelineBar predictions={predictions} fetchedAt={fetchedAt} />
 
-        {/* Upcoming closures list */}
-        {predictions.length > 0 && (
+        {/* Upcoming merged closures list */}
+        {merged.length > 0 && (
           <div style={styles.closureList}>
-            {predictions.map((pred, i) => (
-              <div key={i} style={styles.closureItem}>
-                <div style={styles.closureTime}>
-                  <span style={styles.closureTimeMain}>
-                    {formatTime(new Date(pred.closes_at))}
-                  </span>
-                  <span style={styles.closureTimeSub}>
-                    closes
-                  </span>
+            {merged.map((m, i) => {
+              const closesIn = Math.round((m.closesAt - now) / 1000 / 60)
+              const duration = Math.round((m.opensAt - m.closesAt) / 1000 / 60)
+              const isPast   = m.closesAt <= now
+
+              // Find individual trains within this merged window
+              const trains = predictions.filter(p =>
+                new Date(p.closes_at) >= m.closesAt &&
+                new Date(p.closes_at) < m.opensAt
+              )
+
+              return (
+                <div key={i} style={styles.closureItem}>
+                  <div style={styles.closureTime}>
+                    <span style={styles.closureTimeMain}>
+                      {formatTime(m.closesAt)}
+                    </span>
+                    <span style={styles.closureTimeSub}>closes</span>
+                  </div>
+                  <div style={styles.closureDivider} />
+                  <div style={styles.closureTime}>
+                    <span style={styles.closureTimeMain}>
+                      {formatTime(m.opensAt)}
+                    </span>
+                    <span style={styles.closureTimeSub}>opens</span>
+                  </div>
+                  <div style={styles.closureMeta}>
+                    <span style={styles.closureDuration}>
+                      ~{duration} min{duration !== 1 ? 's' : ''}
+                    </span>
+                    <span style={styles.closureTrainCount}>
+                      {trains.length} train{trains.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
                 </div>
-                <div style={styles.closureDivider} />
-                <div style={styles.closureTime}>
-                  <span style={styles.closureTimeMain}>
-                    {formatTime(new Date(pred.opens_at))}
-                  </span>
-                  <span style={styles.closureTimeSub}>
-                    opens
-                  </span>
-                </div>
-                <div style={styles.closureMeta}>
-                  <span style={{
-                    ...styles.closureBadge,
-                    backgroundColor: pred.time_basis === 'scheduled'
-                      ? 'var(--surface-2)'
-                      : pred.time_basis === 'predicted'
-                        ? '#1A2A1A'
-                        : '#1A1A2A',
-                    color: pred.time_basis === 'scheduled'
-                      ? 'var(--text-dimmer)'
-                      : pred.time_basis === 'predicted'
-                        ? 'var(--green-dim)'
-                        : 'var(--text-dim)',
-                  }}>
-                    {pred.time_basis}
-                  </span>
-                  <span style={styles.closureDirection}>
-                    {pred.direction || ''}
-                    {pred.is_stopping ? ' · stopping' : ' · pass-through'}
-                  </span>
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
 
-        {predictions.length === 0 && (
+        {merged.length === 0 && (
           <p style={styles.noPredictions}>
             No closures expected in the next 30 minutes.
           </p>
@@ -151,13 +138,12 @@ export default function CrossingPage({ params }) {
       {/* Footer */}
       <footer style={styles.footer}>
         <span style={styles.footerText}>
-          Updated {lastRefresh ? formatTimeFull(lastRefresh) : '—'}
-          · refreshes every 30s
+          Updated {lastRefresh ? formatTimeFull(lastRefresh) : '—'} · refreshes every 30s
         </span>
         <span style={styles.footerBasis}>
-          {predictions.some(p => p.time_basis === 'predicted')
-            ? '● Live predictions'
-            : '○ Timetable data'}
+          {predictions.some(p => p.time_basis === 'predicted' || p.time_basis === 'actual')
+            ? '● Live'
+            : '○ Timetable'}
         </span>
       </footer>
 
@@ -166,36 +152,34 @@ export default function CrossingPage({ params }) {
 }
 
 // ============================================================
-// Determine current crossing status and summary text
+// Status — uses merged closures for accuracy
 // ============================================================
 
-function getCrossingStatus(predictions, fetchedAt) {
-  const now = fetchedAt ? new Date(fetchedAt) : new Date()
-
-  // Find the first prediction whose closure window contains now
-  const current = predictions.find(p =>
-    new Date(p.closes_at) <= now && new Date(p.opens_at) >= now
-  )
+function getCrossingStatus(merged, now) {
+  // Is crossing currently closed?
+  const current = merged.find(m => m.closesAt <= now && m.opensAt >= now)
 
   if (current) {
-    const opensIn = Math.round((new Date(current.opens_at) - now) / 1000 / 60)
+    const opensIn = Math.round((current.opensAt - now) / 1000 / 60)
     return {
       isOpen:  false,
-      summary: `Crossing closed. Expected to open in ${opensIn} minute${opensIn !== 1 ? 's' : ''}.`
+      summary: opensIn <= 0
+        ? 'Crossing closed. Expected to open shortly.'
+        : `Crossing closed. Expected to open in ${opensIn} minute${opensIn !== 1 ? 's' : ''}.`
     }
   }
 
-  // Find the next upcoming closure
-  const next = predictions.find(p => new Date(p.closes_at) > now)
+  // Next upcoming merged closure
+  const next = merged.find(m => m.closesAt > now)
 
   if (next) {
-    const closesIn = Math.round((new Date(next.closes_at) - now) / 1000 / 60)
-    const duration = Math.round((new Date(next.opens_at) - new Date(next.closes_at)) / 1000 / 60)
+    const closesIn = Math.round((next.closesAt - now) / 1000 / 60)
+    const duration = Math.round((next.opensAt - next.closesAt) / 1000 / 60)
 
-    if (closesIn === 0) {
+    if (closesIn <= 0) {
       return {
-        isOpen:  true,
-        summary: `Crossing closing now — expected closed for ${duration} minute${duration !== 1 ? 's' : ''}.`
+        isOpen:  false,
+        summary: `Crossing closing now — expected closed for approximately ${duration} minute${duration !== 1 ? 's' : ''}.`
       }
     }
 
@@ -219,7 +203,6 @@ function LoadingScreen() {
   return (
     <main style={styles.main}>
       <div style={styles.centred}>
-        <div style={styles.loadingDot} />
         <p style={styles.loadingText}>Loading crossing data…</p>
       </div>
     </main>
@@ -293,29 +276,29 @@ const styles = {
     lineHeight: '1.2',
   },
   subtitle: {
-    fontSize:   '13px',
-    color:      'var(--text-dim)',
-    marginTop:  '4px',
+    fontSize:  '13px',
+    color:     'var(--text-dim)',
+    marginTop: '4px',
   },
   section: {
     padding: '16px 20px',
   },
   sectionLabel: {
-    fontSize:     '11px',
-    fontFamily:   'var(--font-mono)',
-    color:        'var(--text-dimmer)',
-    letterSpacing:'0.08em',
-    textTransform:'uppercase',
-    marginBottom: '12px',
-    fontWeight:   '400',
+    fontSize:      '11px',
+    fontFamily:    'var(--font-mono)',
+    color:         'var(--text-dimmer)',
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    marginBottom:  '12px',
+    fontWeight:    '400',
   },
   statusPill: {
-    display:       'inline-flex',
-    alignItems:    'center',
-    gap:           '8px',
-    padding:       '8px 16px',
-    borderRadius:  '999px',
-    marginBottom:  '12px',
+    display:      'inline-flex',
+    alignItems:   'center',
+    gap:          '8px',
+    padding:      '8px 16px',
+    borderRadius: '999px',
+    marginBottom: '12px',
   },
   statusDot: {
     width:        '8px',
@@ -336,19 +319,19 @@ const styles = {
     lineHeight: '1.5',
   },
   closureList: {
-    marginTop:    '16px',
-    display:      'flex',
-    flexDirection:'column',
-    gap:          '8px',
+    marginTop:     '16px',
+    display:       'flex',
+    flexDirection: 'column',
+    gap:           '8px',
   },
   closureItem: {
-    display:         'flex',
-    alignItems:      'center',
-    gap:             '12px',
-    background:      'var(--surface)',
-    borderRadius:    '8px',
-    padding:         '10px 14px',
-    border:          '1px solid var(--border)',
+    display:      'flex',
+    alignItems:   'center',
+    gap:          '12px',
+    background:   'var(--surface)',
+    borderRadius: '8px',
+    padding:      '10px 14px',
+    border:       '1px solid var(--border)',
   },
   closureTime: {
     display:       'flex',
@@ -363,9 +346,9 @@ const styles = {
     color:      'var(--text)',
   },
   closureTimeSub: {
-    fontSize: '10px',
-    color:    'var(--text-dimmer)',
-    marginTop:'1px',
+    fontSize:  '10px',
+    color:     'var(--text-dimmer)',
+    marginTop: '1px',
   },
   closureDivider: {
     flex:            1,
@@ -380,13 +363,13 @@ const styles = {
     gap:           '3px',
     marginLeft:    'auto',
   },
-  closureBadge: {
-    fontSize:     '10px',
-    fontFamily:   'var(--font-mono)',
-    padding:      '2px 6px',
-    borderRadius: '4px',
+  closureDuration: {
+    fontSize:   '13px',
+    fontFamily: 'var(--font-mono)',
+    color:      'var(--text)',
+    fontWeight: '500',
   },
-  closureDirection: {
+  closureTrainCount: {
     fontSize: '10px',
     color:    'var(--text-dimmer)',
   },
@@ -396,25 +379,25 @@ const styles = {
     color:     'var(--text-dim)',
   },
   engineSection: {
-    margin:        '8px 20px',
-    padding:       '14px 16px',
-    background:    'var(--surface)',
-    borderRadius:  '8px',
-    border:        '1px solid var(--border)',
+    margin:       '8px 20px',
+    padding:      '14px 16px',
+    background:   'var(--surface)',
+    borderRadius: '8px',
+    border:       '1px solid var(--border)',
   },
   engineNotice: {
-    fontSize:   '13px',
-    color:      'var(--text-dim)',
-    lineHeight: '1.5',
-    textAlign:  'center',
+    fontSize:  '13px',
+    color:     'var(--text-dim)',
+    lineHeight:'1.5',
+    textAlign: 'center',
   },
   footer: {
-    padding:        '16px 20px 0',
-    display:        'flex',
-    justifyContent: 'space-between',
-    alignItems:     'center',
-    borderTop:      '1px solid var(--border)',
-    marginTop:      '8px',
+    padding:         '16px 20px 0',
+    display:         'flex',
+    justifyContent:  'space-between',
+    alignItems:      'center',
+    borderTop:       '1px solid var(--border)',
+    marginTop:       '8px',
   },
   footerText: {
     fontSize:   '11px',
@@ -435,21 +418,14 @@ const styles = {
     gap:            '12px',
     padding:        '20px',
   },
-  loadingDot: {
-    width:        '12px',
-    height:       '12px',
-    borderRadius: '50%',
-    background:   'var(--green)',
-    animation:    'pulse 1.5s ease-in-out infinite',
-  },
   loadingText: {
     fontSize:   '14px',
     color:      'var(--text-dim)',
     fontFamily: 'var(--font-mono)',
   },
   errorText: {
-    fontSize:   '15px',
-    color:      'var(--text)',
+    fontSize: '15px',
+    color:    'var(--text)',
   },
   errorDetail: {
     fontSize:   '12px',
