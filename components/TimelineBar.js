@@ -5,19 +5,22 @@
 // TimelineBar
 // Shows a 30-minute window of crossing open/closed status.
 // Green = open, Red = closed.
-// Two rows of time labels: actual clock time and relative time.
+// All time calculations in UTC-aware Date objects.
+// Display times converted to local time via toLocaleTimeString.
+// Overlapping/near-overlapping closures are merged.
 // ============================================================
 
-export default function TimelineBar({ predictions, fetchedAt }) {
-  const now         = fetchedAt ? new Date(fetchedAt) : new Date()
-  const windowMins  = 30
-  const windowMs    = windowMins * 60 * 1000
-  const endTime     = new Date(now.getTime() + windowMs)
+const MERGE_GAP_MS = 60 * 1000 // Merge closures within 60 seconds of each other
 
-  // Build segments from predictions
-  // Each prediction has closes_at and opens_at
-  // Gaps between predictions are green (crossing open)
-  const segments = buildSegments(predictions, now, endTime)
+export default function TimelineBar({ predictions, fetchedAt }) {
+  const now        = fetchedAt ? new Date(fetchedAt) : new Date()
+  const windowMins = 30
+  const windowMs   = windowMins * 60 * 1000
+  const endTime    = new Date(now.getTime() + windowMs)
+
+  // Merge overlapping/near-overlapping closures
+  const merged   = mergeClosures(predictions, now, endTime)
+  const segments = buildSegments(merged, now, endTime)
 
   // Time label markers at 0, 10, 20, 30 minutes
   const markers = [0, 10, 20, 30]
@@ -73,46 +76,87 @@ export default function TimelineBar({ predictions, fetchedAt }) {
 }
 
 // ============================================================
-// Build segments array from predictions
+// Merge overlapping or near-overlapping closure windows
+// Returns array of { closesAt, opensAt } merged periods
+// ============================================================
+
+export function mergeClosures(predictions, now, endTime) {
+  if (!predictions || predictions.length === 0) return []
+
+  // Filter to relevant window and sort by closes_at
+  const relevant = predictions
+    .filter(p => {
+      const closes = new Date(p.closes_at)
+      const opens  = new Date(p.opens_at)
+      return closes < endTime && opens > now && p.status !== 'cancelled'
+    })
+    .sort((a, b) => new Date(a.closes_at) - new Date(b.closes_at))
+
+  if (relevant.length === 0) return []
+
+  const merged = []
+  let current  = {
+    closesAt: new Date(relevant[0].closes_at),
+    opensAt:  new Date(relevant[0].opens_at)
+  }
+
+  for (let i = 1; i < relevant.length; i++) {
+    const closes = new Date(relevant[i].closes_at)
+    const opens  = new Date(relevant[i].opens_at)
+
+    // If this closure starts within MERGE_GAP_MS of the current one ending, merge them
+    if (closes - current.opensAt <= MERGE_GAP_MS) {
+      // Extend the current closure if this one ends later
+      if (opens > current.opensAt) {
+        current.opensAt = opens
+      }
+    } else {
+      merged.push(current)
+      current = { closesAt: closes, opensAt: opens }
+    }
+  }
+  merged.push(current)
+
+  return merged
+}
+
+// ============================================================
+// Build visual segments from merged closures
 // Fills gaps with green (open) segments
 // ============================================================
 
-function buildSegments(predictions, now, endTime) {
+function buildSegments(mergedClosures, now, endTime) {
   const segments = []
   let cursor     = now
 
-  for (const pred of predictions) {
-    const closes = new Date(pred.closes_at)
-    const opens  = new Date(pred.opens_at)
+  for (const closure of mergedClosures) {
+    const closes = closure.closesAt < now     ? now     : closure.closesAt
+    const opens  = closure.opensAt  > endTime ? endTime : closure.opensAt
 
-    // Clamp to window
     if (closes >= endTime) break
     if (opens  <= now)     continue
 
-    const segCloses = closes < now     ? now     : closes
-    const segOpens  = opens  > endTime ? endTime : opens
-
-    // Green gap before this closure (crossing open)
-    if (cursor < segCloses) {
+    // Green gap before this closure
+    if (cursor < closes) {
       segments.push({
         start:    cursor,
-        end:      segCloses,
-        startPct: toPct(cursor,   now, endTime),
-        widthPct: toPct(segCloses, now, endTime) - toPct(cursor, now, endTime),
+        end:      closes,
+        startPct: toPct(cursor, now, endTime),
+        widthPct: toPct(closes, now, endTime) - toPct(cursor, now, endTime),
         isOpen:   true
       })
     }
 
-    // Red segment (crossing closed)
+    // Red segment
     segments.push({
-      start:    segCloses,
-      end:      segOpens,
-      startPct: toPct(segCloses, now, endTime),
-      widthPct: toPct(segOpens,  now, endTime) - toPct(segCloses, now, endTime),
+      start:    closes,
+      end:      opens,
+      startPct: toPct(closes, now, endTime),
+      widthPct: toPct(opens,  now, endTime) - toPct(closes, now, endTime),
       isOpen:   false
     })
 
-    cursor = segOpens
+    cursor = opens
   }
 
   // Final green segment to end of window
@@ -130,7 +174,7 @@ function buildSegments(predictions, now, endTime) {
 }
 
 function toPct(time, start, end) {
-  const total = end - start
+  const total = end   - start
   const pos   = new Date(time) - start
   return Math.max(0, Math.min(100, (pos / total) * 100))
 }
@@ -139,14 +183,10 @@ function formatTime(date) {
   return date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
 }
 
-// ============================================================
-// Styles
-// ============================================================
-
 const styles = {
   wrapper: {
-    position: 'relative',
-    width:    '100%',
+    position:   'relative',
+    width:      '100%',
     userSelect: 'none',
   },
   labelRow: {
@@ -155,11 +195,11 @@ const styles = {
     width:    '100%',
   },
   label: {
-    position:  'absolute',
-    transform: 'translateX(-50%)',
-    fontSize:  '11px',
-    color:     'var(--text-dim)',
-    fontFamily:'var(--font-mono)',
+    position:   'absolute',
+    transform:  'translateX(-50%)',
+    fontSize:   '11px',
+    color:      'var(--text-dim)',
+    fontFamily: 'var(--font-mono)',
     whiteSpace: 'nowrap',
   },
   relLabel: {
@@ -176,9 +216,9 @@ const styles = {
     margin:       '4px 0',
   },
   segment: {
-    position: 'absolute',
-    top:      0,
-    height:   '100%',
+    position:   'absolute',
+    top:        0,
+    height:     '100%',
     transition: 'width 0.3s ease',
   },
   nowMarker: {
