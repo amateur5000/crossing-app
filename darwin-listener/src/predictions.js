@@ -235,6 +235,22 @@ export async function processPrediction(record) {
 // ============================================================
 
 export async function processDeactivated(record) {
+  // Only mark as cancelled if the train has not already received actual times
+  // Darwin sends deactivation for completed journeys too, not just cancellations
+  const { data: existing } = await supabase
+    .from('train_locations')
+    .select('time_basis')
+    .eq('train_id', record.trainId)
+    .single();
+
+  // If already marked as actual, the train ran — ignore the deactivation
+  if (existing?.time_basis === 'actual') {
+    if (process.env.LOG_LEVEL === 'debug') {
+      console.log(`[deactivated] Ignoring deactivation for completed train ${record.trainId}`);
+    }
+    return;
+  }
+
   const now = new Date().toISOString();
 
   const { error: locError } = await supabase
