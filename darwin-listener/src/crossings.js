@@ -1,13 +1,14 @@
 // ============================================================
 // src/crossings.js
-// Loads monitored crossings from Supabase on startup.
+// Loads monitored crossings and their station mappings
+// from Supabase on startup.
 // Builds a TIPLOC-based lookup map for fast filtering.
 // ============================================================
 
 import { supabase } from './supabase.js';
 
-// In-memory map of TIPLOC -> array of crossing records
-// e.g. { 'MRTLKE': [{ crossing_id: 1, name: 'Mortlake', lead_time_seconds: 180 }] }
+// In-memory map of TIPLOC -> array of crossing station records
+// e.g. { 'MRTLKE': [{ crossing_id: 1, side: 'inner', ... }] }
 let monitoredTiplocs = {};
 
 export async function loadCrossings() {
@@ -21,10 +22,12 @@ export async function loadCrossings() {
       tiploc,
       distance_metres,
       direction,
+      side,
       crossings (
         id,
         name,
         lead_time_seconds,
+        line_speed_mph,
         active
       )
     `);
@@ -39,29 +42,33 @@ export async function loadCrossings() {
   for (const row of data) {
     if (!row.crossings || !row.crossings.active) continue;
     if (!row.tiploc) {
-      console.warn(`[crossings] Warning: no TIPLOC for station ${row.station_name} (${row.station_crs}) — skipping`);
+      console.warn(`[crossings] Warning: no TIPLOC for ${row.station_name} — skipping`);
       continue;
     }
 
     const tiploc = row.tiploc;
-    if (!monitoredTiplocs[tiploc]) {
-      monitoredTiplocs[tiploc] = [];
-    }
+    if (!monitoredTiplocs[tiploc]) monitoredTiplocs[tiploc] = [];
 
     monitoredTiplocs[tiploc].push({
-      crossing_id: row.crossings.id,
-      crossing_name: row.crossings.name,
-      lead_time_seconds: row.crossings.lead_time_seconds,
-      station_crs: row.station_crs,
-      station_name: row.station_name,
+      crossing_id:        row.crossings.id,
+      crossing_name:      row.crossings.name,
+      lead_time_seconds:  row.crossings.lead_time_seconds,
+      line_speed_mph:     row.crossings.line_speed_mph || 60,
+      station_crs:        row.station_crs,
+      station_name:       row.station_name,
       tiploc,
-      distance_metres: row.distance_metres,
-      direction: row.direction
+      distance_metres:    row.distance_metres,
+      side:               row.side,
+      direction:          row.direction
     });
   }
 
-  const tiplocCount = Object.keys(monitoredTiplocs).length;
-  console.log(`[crossings] Loaded ${data.length} crossing-station mappings across ${tiplocCount} TIPLOCs`);
+  const tiplocCount   = Object.keys(monitoredTiplocs).length;
+  const crossingCount = new Set(
+    Object.values(monitoredTiplocs).flat().map(r => r.crossing_id)
+  ).size;
+
+  console.log(`[crossings] Loaded ${crossingCount} crossing(s) across ${tiplocCount} TIPLOC(s)`);
   console.log(`[crossings] Monitoring TIPLOCs: ${Object.keys(monitoredTiplocs).join(', ')}`);
 
   return monitoredTiplocs;
