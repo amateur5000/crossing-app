@@ -88,6 +88,8 @@ function extractFromTS(ts, messageTimestamp) {
     if (!tiploc || !isTiplocMonitored(tiploc)) continue;
 
     console.log(`[parser] Found monitored TIPLOC: ${tiploc} for train ${trainId}`);
+    console.log(`[parser] Location keys: ${Object.keys(loc).join(", ")}`);
+    console.log(`[parser] Location raw: ${JSON.stringify(loc)}`);
 
     // ---- Arrival times ----
     const arr = loc.arr || {};
@@ -273,3 +275,4 @@ function toISO(timeStr) {
 
   return result.toISOString();
 }
+// Note: targeted debug added below in extractFromTS
