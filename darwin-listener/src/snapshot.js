@@ -123,21 +123,38 @@ async function processSchedulesFromSnapshot(parsed) {
     return;
   }
 
-  // uR element — try namespace-prefixed and plain versions
-  const uR = pport['pp:uR'] || pport['uR'] || pport['ur'];
-  if (!uR) {
-    console.error('[snapshot] Could not find uR element. Keys:', Object.keys(pport).join(', '));
+  // Log all keys inside pport to understand the structure
+  console.log('[snapshot] pport keys:', Object.keys(pport).join(', '));
+
+  // uR may be a single element or an array (snapshot can have multiple uR blocks)
+  const uRRaw = pport['pp:uR'] || pport['uR'] || pport['ur'];
+  const uRArray = uRRaw ? (Array.isArray(uRRaw) ? uRRaw : [uRRaw]) : [];
+
+  if (uRArray.length === 0) {
+    // Log full pport structure to diagnose
+    console.error('[snapshot] Could not find uR element. Full pport preview:', JSON.stringify(pport).substring(0, 1000));
     return;
   }
 
-  // Schedule elements — try namespace-prefixed and plain versions
-  const schedules = uR['pp:schedule'] || uR['schedule'] || uR['Schedule'];
-  if (!schedules) {
-    console.log('[snapshot] No schedules in snapshot');
+  console.log('[snapshot] Found', uRArray.length, 'uR block(s)');
+
+  // Collect all schedules across all uR blocks
+  const allSchedules = [];
+  for (const uR of uRArray) {
+    const s = uR['pp:schedule'] || uR['schedule'] || uR['Schedule'];
+    if (s) {
+      const arr = Array.isArray(s) ? s : [s];
+      allSchedules.push(...arr);
+    }
+  }
+
+  const schedules = allSchedules;
+  if (!schedules || schedules.length === 0) {
+    console.log('[snapshot] No schedules found in any uR block');
     return;
   }
 
-  const scheduleArray = Array.isArray(schedules) ? schedules : [schedules];
+  const scheduleArray = schedules; // Already an array from above
   console.log(`[snapshot] Processing ${scheduleArray.length} schedules from snapshot`);
 
   let found   = 0;
