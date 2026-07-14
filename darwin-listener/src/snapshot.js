@@ -73,20 +73,57 @@ export async function processSnapshot() {
 
     console.log(`[snapshot] Downloaded and decompressed snapshot (${Math.round(xml.length / 1024)}KB)`);
 
-    // Step 4: Parse the XML
-    const parsed = await parseStringPromise(xml, {
-      explicitArray: false,
-      mergeAttrs:    true
-    });
+    // Step 4: Split into individual XML documents and process each
+    // The snapshot file contains multiple concatenated Push Port XML messages
+    // Each starts with <?xml or <Pport or <pp:Pport
+    const xmlDocs = splitXmlDocuments(xml);
+    console.log(`[snapshot] Found ${xmlDocs.length} XML document(s) in snapshot`);
 
-    // Step 5: Extract and process schedules
-    // Log root element keys to help diagnose structure issues
-    console.log('[snapshot] Root element keys:', Object.keys(parsed).join(', '));
-    await processSchedulesFromSnapshot(parsed);
+    let totalFound = 0;
+    let totalInserted = 0;
+    let totalSkipped = 0;
+
+    for (let i = 0; i < xmlDocs.length; i++) {
+      const doc = xmlDocs[i];
+      if (!doc.trim()) continue;
+
+      try {
+        const parsed = await parseStringPromise(doc, {
+          explicitArray: false,
+          mergeAttrs:    true
+        });
+
+        const { found, inserted, skipped } = await processSchedulesFromSnapshot(parsed);
+        totalFound    += found;
+        totalInserted += inserted;
+        totalSkipped  += skipped;
+      } catch (docErr) {
+        if (process.env.LOG_LEVEL === 'debug') {
+          console.warn(`[snapshot] Failed to parse document ${i}:`, docErr.message);
+        }
+      }
+    }
+
+    console.log(`[snapshot] Complete — found ${totalFound} monitored trains, inserted ${totalInserted} new, skipped ${totalSkipped} existing`);
 
   } catch (err) {
     console.error('[snapshot] Error processing snapshot:', err.message);
   }
+}
+
+// ============================================================
+// Split concatenated XML documents in snapshot file
+// The snapshot contains multiple Push Port messages joined together
+// We split on the XML declaration or Pport opening tags
+// ============================================================
+
+function splitXmlDocuments(xml) {
+  // Split on XML declarations or on closing then opening Pport tags
+  // Each document starts with <?xml or <pp:Pport or <Pport
+  const parts = xml.split(/(?=<\?xml\s|(?<=<\/(?:pp:)?Pport>)\s*<(?:pp:)?Pport)/);
+
+  // Filter out empty parts and parts that don't contain a Pport element
+  return parts.filter(p => p.trim() && (p.includes('Pport') || p.includes('pport')));
 }
 
 // ============================================================
@@ -157,7 +194,7 @@ async function processSchedulesFromSnapshot(parsed) {
   const scheduleArray = schedules; // Already an array from above
   console.log(`[snapshot] Processing ${scheduleArray.length} schedules from snapshot`);
 
-  let found   = 0;
+  let found    = 0;
   let inserted = 0;
   let skipped  = 0;
 
@@ -239,7 +276,7 @@ async function processSchedulesFromSnapshot(parsed) {
     }
   }
 
-  console.log(`[snapshot] Complete — found ${found} monitored trains, inserted ${inserted} new, skipped ${skipped} existing`);
+  return { found, inserted, skipped };
 }
 
 // ============================================================
