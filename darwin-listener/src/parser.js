@@ -34,10 +34,22 @@ export function parseMessage(bytesField) {
     }
 
     // ---- Schedule records ----
+    // Darwin sends schedule types: P (permanent), O (overlay), N (new), VAR (variation)
+    // All may arrive under uR.schedule or uR.deactivated
     if (uR.schedule) {
       const schedules = Array.isArray(uR.schedule) ? uR.schedule : [uR.schedule];
       for (const schedule of schedules) {
         results.push(...extractFromSchedule(schedule));
+      }
+    }
+
+    // ---- Association records (linked services, eg VAR overlays) ----
+    // Log unknown uR keys in debug mode to catch any missed message types
+    if (process.env.LOG_LEVEL === "debug") {
+      const knownKeys = new Set(["updateOrigin", "requestSource", "requestId", "TS", "schedule", "deactivated", "association", "trackingID"]);
+      const unknownKeys = Object.keys(uR).filter(k => !knownKeys.has(k));
+      if (unknownKeys.length > 0) {
+        console.log("[parser] Unknown uR keys:", unknownKeys.join(", "));
       }
     }
 
@@ -146,6 +158,19 @@ function extractFromSchedule(schedule) {
   const operator = schedule.toc;
   if (!trainId) return results;
 
+  // STP (Short Term Planning) indicator:
+  // P = Permanent, O = Overlay, N = New, C = Cancellation, VAR = Variation
+  // We process all types EXCEPT C (cancellation of a permanent schedule)
+  const stp = schedule["@stp"] || schedule.stp || null;
+  if (stp === "C") {
+    if (process.env.LOG_LEVEL === "debug") {
+      console.log("[parser] Skipping cancelled schedule (STP=C) for train " + trainId);
+    }
+    return results;
+  }
+
+  const stpLabel = stp || "unknown";
+
   const locationTypes = ['OR', 'OPOR', 'IP', 'OPIP', 'PP', 'DT', 'OPDT'];
 
   // Collect all locations for direction inference
@@ -165,7 +190,7 @@ function extractFromSchedule(schedule) {
       const tiploc = loc.tpl;
       if (!tiploc || !isTiplocMonitored(tiploc)) continue;
 
-      console.log(`[parser] Schedule: found monitored TIPLOC ${tiploc} for train ${trainId}`);
+      console.log(`[parser] Schedule (STP=${stpLabel}): found monitored TIPLOC ${tiploc} for train ${trainId}`);
 
       // Scheduled times from timetable
       const scheduledArrival   = loc.wta ? toISO(loc.wta) : null;
