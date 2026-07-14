@@ -206,11 +206,11 @@ async function processSchedulesFromSnapshot(parsed) {
   let inserted = 0;
   let skipped  = 0;
 
-  // Try plain, pp: and sm: namespace-prefixed location type keys
-  // Darwin snapshot uses sm: namespace for schedule elements
+  // Darwin snapshot uses s5: namespace for schedule location elements
   const locationTypes    = ['OR', 'OPOR', 'IP', 'OPIP', 'PP', 'DT', 'OPDT'];
   const allLocationTypes = [
     ...locationTypes,
+    ...locationTypes.map(t => 's5:' + t),
     ...locationTypes.map(t => 'pp:' + t),
     ...locationTypes.map(t => 'sm:' + t),
     ...locationTypes.map(t => 'ct:' + t),
@@ -233,7 +233,7 @@ async function processSchedulesFromSnapshot(parsed) {
         : [schedule[locType]];
 
       for (const loc of locations) {
-        const tiploc = loc.tpl || loc['@tpl'] || loc['sm:tpl'] || loc['ct:tpl'];
+        const tiploc = loc.tpl || loc['@tpl'] || loc['s5:tpl'] || loc['sm:tpl'] || loc['ct:tpl'];
         if (!tiploc || !isTiplocMonitored(tiploc)) continue;
 
         found++;
@@ -255,9 +255,9 @@ async function processSchedulesFromSnapshot(parsed) {
         console.log(`[snapshot] New train found: ${trainId} at ${tiploc} (${locType})`);
 
         // Extract times — attributes may be plain, @-prefixed, or namespace-prefixed
-        const wta = loc.wta || loc['@wta'] || loc['sm:wta'] || loc['ct:wta'];
-        const wtd = loc.wtd || loc['@wtd'] || loc['sm:wtd'] || loc['ct:wtd'];
-        const wtp = loc.wtp || loc['@wtp'] || loc['sm:wtp'] || loc['ct:wtp'];
+        const wta = loc.wta || loc['@wta'] || loc['s5:wta'] || loc['sm:wta'] || loc['ct:wta'];
+        const wtd = loc.wtd || loc['@wtd'] || loc['s5:wtd'] || loc['sm:wtd'] || loc['ct:wtd'];
+        const wtp = loc.wtp || loc['@wtp'] || loc['s5:wtp'] || loc['sm:wtp'] || loc['ct:wtp'];
 
         const scheduledArrival   = wta ? toISO(wta, ssd) : null;
         const scheduledDeparture = wtd ? toISO(wtd, ssd) : null;
