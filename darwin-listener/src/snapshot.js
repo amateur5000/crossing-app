@@ -156,29 +156,31 @@ async function processSchedulesFromSnapshot(parsed) {
     Object.values(parsed).find(v => v && typeof v === 'object');
 
   if (!pport) {
-    console.error('[snapshot] Could not find Pport element. Keys:', Object.keys(parsed).join(', '));
-    return;
+    if (process.env.LOG_LEVEL === 'debug') {
+      console.error('[snapshot] Could not find Pport element. Keys:', Object.keys(parsed).join(', '));
+    }
+    return { found: 0, inserted: 0, skipped: 0 };
   }
 
   // Log all keys inside pport to understand the structure
   console.log('[snapshot] pport keys:', Object.keys(pport).join(', '));
 
-  // uR may be a single element or an array (snapshot can have multiple uR blocks)
-  const uRRaw = pport['pp:uR'] || pport['uR'] || pport['ur'];
-  const uRArray = uRRaw ? (Array.isArray(uRRaw) ? uRRaw : [uRRaw]) : [];
+  // Snapshot uses sR (Schedule Response) not uR
+  // Try both sR and uR for compatibility
+  const sRRaw = pport['pp:sR'] || pport['sR'] || pport['pp:uR'] || pport['uR'] || pport['ur'];
+  const sRArray = sRRaw ? (Array.isArray(sRRaw) ? sRRaw : [sRRaw]) : [];
 
-  if (uRArray.length === 0) {
-    // Log full pport structure to diagnose
-    console.error('[snapshot] Could not find uR element. Full pport preview:', JSON.stringify(pport).substring(0, 1000));
-    return;
+  if (sRArray.length === 0) {
+    if (process.env.LOG_LEVEL === 'debug') {
+      console.error('[snapshot] Could not find sR/uR element. Full pport preview:', JSON.stringify(pport).substring(0, 500));
+    }
+    return { found: 0, inserted: 0, skipped: 0 };
   }
 
-  console.log('[snapshot] Found', uRArray.length, 'uR block(s)');
-
-  // Collect all schedules across all uR blocks
+  // Collect all schedules across all sR/uR blocks
   const allSchedules = [];
-  for (const uR of uRArray) {
-    const s = uR['pp:schedule'] || uR['schedule'] || uR['Schedule'];
+  for (const sR of sRArray) {
+    const s = sR['pp:schedule'] || sR['schedule'] || sR['Schedule'];
     if (s) {
       const arr = Array.isArray(s) ? s : [s];
       allSchedules.push(...arr);
@@ -187,8 +189,7 @@ async function processSchedulesFromSnapshot(parsed) {
 
   const schedules = allSchedules;
   if (!schedules || schedules.length === 0) {
-    console.log('[snapshot] No schedules found in any uR block');
-    return;
+    return { found: 0, inserted: 0, skipped: 0 };
   }
 
   const scheduleArray = schedules; // Already an array from above
