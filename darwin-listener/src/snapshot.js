@@ -48,11 +48,12 @@ export async function processSnapshot() {
       return;
     }
 
-    const urlData = await urlResponse.json();
-    const downloadUrl = urlData.url || urlData.downloadUrl || urlData.download_url;
+    // The API returns the download URL as plain text, not JSON
+    const responseText = await urlResponse.text();
+    const downloadUrl = responseText.trim();
 
-    if (!downloadUrl) {
-      console.error('[snapshot] No download URL in response:', JSON.stringify(urlData));
+    if (!downloadUrl || !downloadUrl.startsWith('http')) {
+      console.error('[snapshot] Unexpected response format:', responseText.substring(0, 200));
       return;
     }
 
