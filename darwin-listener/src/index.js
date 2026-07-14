@@ -8,6 +8,7 @@ import { Kafka } from 'kafkajs';
 import { loadCrossings } from './crossings.js';
 import { parseMessage } from './parser.js';
 import { processPrediction, processDeactivated, runCleanup } from './predictions.js';
+import { processSnapshot } from './snapshot.js';
 
 const kafka = new Kafka({
   clientId: 'level-crossing-listener',
@@ -117,6 +118,22 @@ function scheduleCleanup() {
   }, intervalMs);
 }
 
+function scheduleSnapshot() {
+  // Run snapshot processor once per hour, 10 minutes past the hour
+  // to allow time for the snapshot to become available
+  console.log('[snapshot] Scheduled to run hourly');
+
+  // Run once on startup (after a short delay to let the Kafka listener initialise)
+  setTimeout(async () => {
+    await processSnapshot();
+  }, 30 * 1000); // 30 seconds after startup
+
+  // Then run every hour
+  setInterval(async () => {
+    await processSnapshot();
+  }, 60 * 60 * 1000);
+}
+
 setInterval(logStats, 5 * 60 * 1000);
 
 async function shutdown() {
@@ -130,6 +147,7 @@ process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
 scheduleCleanup();
+scheduleSnapshot();
 
 startListener().catch(err => {
   console.error('[listener] Fatal error — could not start:', err.message);
