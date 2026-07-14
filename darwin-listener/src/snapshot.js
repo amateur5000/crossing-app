@@ -195,19 +195,33 @@ async function processSchedulesFromSnapshot(parsed) {
   const scheduleArray = schedules; // Already an array from above
   console.log(`[snapshot] Processing ${scheduleArray.length} schedules from snapshot`);
 
+  // DEBUG: Log the first schedule's keys to understand the structure
+  if (scheduleArray.length > 0) {
+    const first = scheduleArray[0];
+    console.log('[snapshot] First schedule keys:', Object.keys(first).join(', '));
+    console.log('[snapshot] First schedule preview:', JSON.stringify(first).substring(0, 500));
+  }
+
   let found    = 0;
   let inserted = 0;
   let skipped  = 0;
 
-  // Try both plain and namespace-prefixed location type keys
+  // Try plain, pp: and sm: namespace-prefixed location type keys
+  // Darwin snapshot uses sm: namespace for schedule elements
   const locationTypes    = ['OR', 'OPOR', 'IP', 'OPIP', 'PP', 'DT', 'OPDT'];
-  const allLocationTypes = [...locationTypes, ...locationTypes.map(t => 'pp:' + t)];
+  const allLocationTypes = [
+    ...locationTypes,
+    ...locationTypes.map(t => 'pp:' + t),
+    ...locationTypes.map(t => 'sm:' + t),
+    ...locationTypes.map(t => 'ct:' + t),
+  ];
 
   for (const schedule of scheduleArray) {
-    // Attributes may be direct or prefixed depending on xml2js config
-    const trainId  = schedule.rid  || schedule['@rid'];
-    const operator = schedule.toc  || schedule['@toc'];
-    const ssd      = schedule.ssd  || schedule['@ssd'];
+    // Attributes may be direct, @-prefixed, or nested under $ (xml2js style)
+    const attrs    = schedule.$ || schedule;
+    const trainId  = schedule.rid  || schedule['@rid']  || attrs.rid;
+    const operator = schedule.toc  || schedule['@toc']  || attrs.toc;
+    const ssd      = schedule.ssd  || schedule['@ssd']  || attrs.ssd;
 
     if (!trainId) continue;
 
@@ -219,7 +233,7 @@ async function processSchedulesFromSnapshot(parsed) {
         : [schedule[locType]];
 
       for (const loc of locations) {
-        const tiploc = loc.tpl || loc['@tpl'];
+        const tiploc = loc.tpl || loc['@tpl'] || loc['sm:tpl'] || loc['ct:tpl'];
         if (!tiploc || !isTiplocMonitored(tiploc)) continue;
 
         found++;
@@ -240,10 +254,10 @@ async function processSchedulesFromSnapshot(parsed) {
         // New train not in our database — insert it
         console.log(`[snapshot] New train found: ${trainId} at ${tiploc} (${locType})`);
 
-        // Extract times — attributes may be plain or @-prefixed
-        const wta = loc.wta || loc['@wta'];
-        const wtd = loc.wtd || loc['@wtd'];
-        const wtp = loc.wtp || loc['@wtp'];
+        // Extract times — attributes may be plain, @-prefixed, or namespace-prefixed
+        const wta = loc.wta || loc['@wta'] || loc['sm:wta'] || loc['ct:wta'];
+        const wtd = loc.wtd || loc['@wtd'] || loc['sm:wtd'] || loc['ct:wtd'];
+        const wtp = loc.wtp || loc['@wtp'] || loc['sm:wtp'] || loc['ct:wtp'];
 
         const scheduledArrival   = wta ? toISO(wta, ssd) : null;
         const scheduledDeparture = wtd ? toISO(wtd, ssd) : null;
