@@ -113,25 +113,25 @@ function decompressGzip(buffer) {
 // ============================================================
 
 async function processSchedulesFromSnapshot(parsed) {
-  // Darwin snapshot structure — try multiple possible root element names
-  // The element may be called Pport, pport, or use a namespace prefix
-  const pport = parsed?.Pport || parsed?.pport ||
-    Object.values(parsed).find(v => v && typeof v === 'object' && (v.uR || v.ur));
+  // Darwin snapshot uses XML namespace prefix pp:
+  // Root element is pp:Pport, children use pp: prefix too
+  const pport = parsed['pp:Pport'] || parsed['Pport'] || parsed['pport'] ||
+    Object.values(parsed).find(v => v && typeof v === 'object');
 
   if (!pport) {
-    console.error('[snapshot] Could not find Pport element. Keys found:', Object.keys(parsed).join(', '));
-    // Log first 500 chars of raw parsed to help diagnose
-    console.log('[snapshot] Parsed structure preview:', JSON.stringify(parsed).substring(0, 500));
+    console.error('[snapshot] Could not find Pport element. Keys:', Object.keys(parsed).join(', '));
     return;
   }
 
-  const uR = pport?.uR || pport?.ur;
+  // uR element — try namespace-prefixed and plain versions
+  const uR = pport['pp:uR'] || pport['uR'] || pport['ur'];
   if (!uR) {
-    console.error('[snapshot] Could not find uR element. Pport keys:', Object.keys(pport).join(', '));
+    console.error('[snapshot] Could not find uR element. Keys:', Object.keys(pport).join(', '));
     return;
   }
 
-  const schedules = uR?.schedule || uR?.Schedule;
+  // Schedule elements — try namespace-prefixed and plain versions
+  const schedules = uR['pp:schedule'] || uR['schedule'] || uR['Schedule'];
   if (!schedules) {
     console.log('[snapshot] No schedules in snapshot');
     return;
@@ -144,17 +144,19 @@ async function processSchedulesFromSnapshot(parsed) {
   let inserted = 0;
   let skipped  = 0;
 
+  // Try both plain and namespace-prefixed location type keys
+  const locationTypes    = ['OR', 'OPOR', 'IP', 'OPIP', 'PP', 'DT', 'OPDT'];
+  const allLocationTypes = [...locationTypes, ...locationTypes.map(t => 'pp:' + t)];
+
   for (const schedule of scheduleArray) {
-    const trainId  = schedule.rid;
-    const operator = schedule.toc;
-    const ssd      = schedule.ssd; // Service start date YYYY-MM-DD
+    // Attributes may be direct or prefixed depending on xml2js config
+    const trainId  = schedule.rid  || schedule['@rid'];
+    const operator = schedule.toc  || schedule['@toc'];
+    const ssd      = schedule.ssd  || schedule['@ssd'];
 
     if (!trainId) continue;
 
-    // Check all location types for monitored TIPLOCs
-    const locationTypes = ['OR', 'OPOR', 'IP', 'OPIP', 'PP', 'DT', 'OPDT'];
-
-    for (const locType of locationTypes) {
+    for (const locType of allLocationTypes) {
       if (!schedule[locType]) continue;
 
       const locations = Array.isArray(schedule[locType])
@@ -162,7 +164,7 @@ async function processSchedulesFromSnapshot(parsed) {
         : [schedule[locType]];
 
       for (const loc of locations) {
-        const tiploc = loc.tpl;
+        const tiploc = loc.tpl || loc['@tpl'];
         if (!tiploc || !isTiplocMonitored(tiploc)) continue;
 
         found++;
@@ -183,14 +185,19 @@ async function processSchedulesFromSnapshot(parsed) {
         // New train not in our database — insert it
         console.log(`[snapshot] New train found: ${trainId} at ${tiploc} (${locType})`);
 
-        // Extract times
-        const scheduledArrival   = loc.wta ? toISO(loc.wta, ssd) : null;
-        const scheduledDeparture = loc.wtd ? toISO(loc.wtd, ssd) : null;
-        const scheduledPass      = loc.wtp ? toISO(loc.wtp, ssd) : null;
+        // Extract times — attributes may be plain or @-prefixed
+        const wta = loc.wta || loc['@wta'];
+        const wtd = loc.wtd || loc['@wtd'];
+        const wtp = loc.wtp || loc['@wtp'];
+
+        const scheduledArrival   = wta ? toISO(wta, ssd) : null;
+        const scheduledDeparture = wtd ? toISO(wtd, ssd) : null;
+        const scheduledPass      = wtp ? toISO(wtp, ssd) : null;
 
         if (!scheduledArrival && !scheduledDeparture && !scheduledPass) continue;
 
-        const isStopping = locType !== 'PP' && locType !== 'OPIP' && !scheduledPass;
+        const baseType   = locType.replace('pp:', '');
+        const isStopping = baseType !== 'PP' && baseType !== 'OPIP' && !scheduledPass;
 
         // Build a record in the same format as the parser output
         const record = {
