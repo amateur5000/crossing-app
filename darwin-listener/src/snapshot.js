@@ -80,6 +80,8 @@ export async function processSnapshot() {
     });
 
     // Step 5: Extract and process schedules
+    // Log root element keys to help diagnose structure issues
+    console.log('[snapshot] Root element keys:', Object.keys(parsed).join(', '));
     await processSchedulesFromSnapshot(parsed);
 
   } catch (err) {
@@ -111,21 +113,25 @@ function decompressGzip(buffer) {
 // ============================================================
 
 async function processSchedulesFromSnapshot(parsed) {
-  // Darwin snapshot structure:
-  // Pport > uR > schedule (array)
-  const pport = parsed?.Pport || parsed?.pport;
+  // Darwin snapshot structure — try multiple possible root element names
+  // The element may be called Pport, pport, or use a namespace prefix
+  const pport = parsed?.Pport || parsed?.pport ||
+    Object.values(parsed).find(v => v && typeof v === 'object' && (v.uR || v.ur));
+
   if (!pport) {
-    console.error('[snapshot] Could not find Pport element in snapshot');
+    console.error('[snapshot] Could not find Pport element. Keys found:', Object.keys(parsed).join(', '));
+    // Log first 500 chars of raw parsed to help diagnose
+    console.log('[snapshot] Parsed structure preview:', JSON.stringify(parsed).substring(0, 500));
     return;
   }
 
-  const uR = pport?.uR;
+  const uR = pport?.uR || pport?.ur;
   if (!uR) {
-    console.error('[snapshot] Could not find uR element in snapshot');
+    console.error('[snapshot] Could not find uR element. Pport keys:', Object.keys(pport).join(', '));
     return;
   }
 
-  const schedules = uR?.schedule;
+  const schedules = uR?.schedule || uR?.Schedule;
   if (!schedules) {
     console.log('[snapshot] No schedules in snapshot');
     return;
