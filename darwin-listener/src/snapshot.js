@@ -150,12 +150,13 @@ function decompressGzip(buffer) {
 // ============================================================
 
 async function processSchedulesFromSnapshot(parsed) {
-  // DEBUG: Log the complete parsed structure for the first few documents
-  // This will show us exactly what fields are available
+  // DEBUG: Log documents that contain MRTLKE as a TIPLOC (tpl field)
+  // This distinguishes schedule docs from station message docs
   const fullJson = JSON.stringify(parsed);
-  if (fullJson.includes('MRTLKE') || fullJson.includes('MTL')) {
-    console.log('[snapshot] *** FOUND MRTLKE IN DOCUMENT ***');
-    console.log('[snapshot] Full document:', fullJson.substring(0, 2000));
+  if (fullJson.includes('"tpl":"MRTLKE"') || fullJson.includes('"MRTLKE"')) {
+    const pportKeys = Object.keys(parsed?.['pp:Pport'] || parsed?.Pport || parsed || {});
+    console.log('[snapshot] *** FOUND MRTLKE tpl IN DOCUMENT *** pport keys:', pportKeys.join(', '));
+    console.log('[snapshot] Full document:', fullJson.substring(0, 3000));
   }
   // Darwin snapshot uses XML namespace prefix pp:
   // Root element is pp:Pport, children use pp: prefix too
