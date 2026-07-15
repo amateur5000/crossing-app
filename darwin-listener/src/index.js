@@ -59,10 +59,10 @@ async function startListener() {
 
   await consumer.subscribe({
     topic: process.env.KAFKA_TOPIC,
-    fromBeginning: false
+    fromBeginning: true  // Replay up to ~150 mins of history on startup
   });
   console.log(`[kafka] Subscribed to topic: ${process.env.KAFKA_TOPIC}`);
-  console.log('[kafka] Listening for train messages...');
+  console.log('[kafka] Replaying Kafka history then listening live...');
   console.log('============================================================');
 
   await consumer.run({
