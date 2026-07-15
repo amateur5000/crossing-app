@@ -176,30 +176,28 @@ async function processSchedulesFromSnapshot(parsed) {
   }
 
   // Snapshot uses sR (Schedule Response) not uR
-  // Try both sR and uR for compatibility
-  const sRRaw = pport['pp:sR'] || pport['sR'] || pport['pp:uR'] || pport['uR'] || pport['ur'];
+  // From debug logs: pport -> sR -> schedule (direct, not nested further)
+  const sRRaw = pport['sR'] || pport['pp:sR'] || pport['uR'] || pport['pp:uR'] || pport['ur'];
   const sRArray = sRRaw ? (Array.isArray(sRRaw) ? sRRaw : [sRRaw]) : [];
 
   if (sRArray.length === 0) {
-    if (process.env.LOG_LEVEL === 'debug') {
-      console.error('[snapshot] Could not find sR/uR element. Full pport preview:', JSON.stringify(pport).substring(0, 500));
-    }
     return { found: 0, inserted: 0, skipped: 0 };
   }
 
   // Collect all schedules across all sR/uR blocks
+  // From debug logs we know sR directly contains 'schedule' key
   const allSchedules = [];
   for (const sR of sRArray) {
-    // Log first sR structure to diagnose
-    if (allSchedules.length === 0 && process.env.LOG_LEVEL === 'debug') {
-      console.log('[snapshot] First sR keys:', Object.keys(sR).join(', '));
-      console.log('[snapshot] First sR preview:', JSON.stringify(sR).substring(0, 300));
-    }
-    const s = sR['pp:schedule'] || sR['schedule'] || sR['Schedule'] ||
-              sR['s5:schedule'] || sR['sm:schedule'] || sR['ct:schedule'];
+    // Try all possible schedule key names
+    const s = sR['schedule'] || sR['Schedule'] ||
+              sR['pp:schedule'] || sR['s5:schedule'] ||
+              sR['sm:schedule'] || sR['ct:schedule'];
     if (s) {
       const arr = Array.isArray(s) ? s : [s];
       allSchedules.push(...arr);
+      if (process.env.LOG_LEVEL === 'debug') {
+        console.log(`[snapshot] Found ${arr.length} schedule(s) in sR block`);
+      }
     }
   }
 
