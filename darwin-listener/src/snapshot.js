@@ -254,6 +254,11 @@ async function processSchedulesFromSnapshot(parsed) {
         : [schedule[locType]];
 
       for (const loc of locations) {
+        // DEBUG: log first few locations to see structure
+        if (process.env.LOG_LEVEL === 'debug' && found === 0) {
+          console.log('[snapshot] Sample loc keys:', Object.keys(loc).join(', '));
+          console.log('[snapshot] Sample loc:', JSON.stringify(loc).substring(0, 200));
+        }
         const tiploc = loc.tpl || loc['@tpl'] || loc['s5:tpl'] || loc['sm:tpl'] || loc['ct:tpl'];
         if (!tiploc || !isTiplocMonitored(tiploc)) continue;
 
