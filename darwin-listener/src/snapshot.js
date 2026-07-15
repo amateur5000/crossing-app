@@ -150,6 +150,13 @@ function decompressGzip(buffer) {
 // ============================================================
 
 async function processSchedulesFromSnapshot(parsed) {
+  // DEBUG: Log the complete parsed structure for the first few documents
+  // This will show us exactly what fields are available
+  const fullJson = JSON.stringify(parsed);
+  if (fullJson.includes('MRTLKE') || fullJson.includes('MTL')) {
+    console.log('[snapshot] *** FOUND MRTLKE IN DOCUMENT ***');
+    console.log('[snapshot] Full document:', fullJson.substring(0, 2000));
+  }
   // Darwin snapshot uses XML namespace prefix pp:
   // Root element is pp:Pport, children use pp: prefix too
   const pport = parsed['pp:Pport'] || parsed['Pport'] || parsed['pport'] ||
