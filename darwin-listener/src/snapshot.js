@@ -163,7 +163,9 @@ async function processSchedulesFromSnapshot(parsed) {
   }
 
   // Log all keys inside pport to understand the structure
-  console.log('[snapshot] pport keys:', Object.keys(pport).join(', '));
+  if (process.env.LOG_LEVEL === 'debug') {
+    console.log('[snapshot] pport keys:', Object.keys(pport).join(', '));
+  }
 
   // Snapshot uses sR (Schedule Response) not uR
   // Try both sR and uR for compatibility
@@ -180,7 +182,13 @@ async function processSchedulesFromSnapshot(parsed) {
   // Collect all schedules across all sR/uR blocks
   const allSchedules = [];
   for (const sR of sRArray) {
-    const s = sR['pp:schedule'] || sR['schedule'] || sR['Schedule'];
+    // Log first sR structure to diagnose
+    if (allSchedules.length === 0 && process.env.LOG_LEVEL === 'debug') {
+      console.log('[snapshot] First sR keys:', Object.keys(sR).join(', '));
+      console.log('[snapshot] First sR preview:', JSON.stringify(sR).substring(0, 300));
+    }
+    const s = sR['pp:schedule'] || sR['schedule'] || sR['Schedule'] ||
+              sR['s5:schedule'] || sR['sm:schedule'] || sR['ct:schedule'];
     if (s) {
       const arr = Array.isArray(s) ? s : [s];
       allSchedules.push(...arr);
