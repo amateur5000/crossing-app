@@ -207,13 +207,20 @@ async function processSchedulesFromSnapshot(parsed) {
   }
 
   const scheduleArray = schedules; // Already an array from above
-  console.log(`[snapshot] Processing ${scheduleArray.length} schedules from snapshot`);
 
-  // DEBUG: Log the first schedule's keys to understand the structure
-  if (scheduleArray.length > 0) {
+  // DEBUG: Log first schedule structure
+  if (scheduleArray.length > 0 && process.env.LOG_LEVEL === 'debug') {
     const first = scheduleArray[0];
-    console.log('[snapshot] First schedule keys:', Object.keys(first).join(', '));
-    console.log('[snapshot] First schedule preview:', JSON.stringify(first).substring(0, 500));
+    const keys = Object.keys(first);
+    console.log('[snapshot] First schedule keys:', keys.join(', '));
+    // Find location type keys specifically
+    const locKeys = keys.filter(k => ['OR','IP','PP','DT','OPOR','OPIP','OPDT'].some(t =>
+      k === t || k.endsWith(':' + t)
+    ));
+    console.log('[snapshot] Location keys found:', locKeys.join(', ') || 'NONE');
+    if (locKeys.length > 0) {
+      console.log('[snapshot] First location preview:', JSON.stringify(first[locKeys[0]]).substring(0, 300));
+    }
   }
 
   let found    = 0;
