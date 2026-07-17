@@ -260,6 +260,11 @@ async function processSchedulesFromSnapshot(parsed) {
           console.log('[snapshot] Sample loc:', JSON.stringify(loc).substring(0, 200));
         }
         const tiploc = loc.tpl || loc['@tpl'] || loc['s5:tpl'] || loc['sm:tpl'] || loc['ct:tpl'];
+        // DEBUG: log if MRTLKE appears anywhere
+        if (tiploc === 'MRTLKE') {
+          console.log('[snapshot] *** MRTLKE FOUND IN SCHEDULE ***', JSON.stringify(loc));
+          console.log('[snapshot] isTiplocMonitored:', isTiplocMonitored(tiploc));
+        }
         if (!tiploc || !isTiplocMonitored(tiploc)) continue;
 
         found++;
