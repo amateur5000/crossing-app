@@ -24,9 +24,12 @@ export async function processSnapshot() {
   console.log('[snapshot] Starting hourly snapshot processing...');
 
   try {
-    // Get the most recent completed hour (5+ mins ago for availability)
+    // Get the most recent FULLY COMPLETED hour.
+    // Subtracting 65 mins guarantees we land in the previous hour regardless
+    // of what minute of the current hour we happen to run at (was: -10 mins,
+    // which landed in the *current* in-progress hour ~50 out of every 60 mins).
     const now  = new Date();
-    const hour = new Date(now.getTime() - 10 * 60 * 1000); // 10 mins ago to be safe
+    const hour = new Date(now.getTime() - 65 * 60 * 1000);
     const date = hour.toISOString().slice(0, 10);           // YYYY-MM-DD
     const hh   = String(hour.getUTCHours()).padStart(2, '0'); // HH
 
@@ -82,6 +85,7 @@ export async function processSnapshot() {
     let totalFound = 0;
     let totalInserted = 0;
     let totalSkipped = 0;
+    let totalParseErrors = 0;
 
     for (let i = 0; i < xmlDocs.length; i++) {
       const doc = xmlDocs[i];
@@ -98,13 +102,14 @@ export async function processSnapshot() {
         totalInserted += inserted;
         totalSkipped  += skipped;
       } catch (docErr) {
+        totalParseErrors++;
         if (process.env.LOG_LEVEL === 'debug') {
           console.warn(`[snapshot] Failed to parse document ${i}:`, docErr.message);
         }
       }
     }
 
-    console.log(`[snapshot] Complete — found ${totalFound} monitored trains, inserted ${totalInserted} new, skipped ${totalSkipped} existing`);
+    console.log(`[snapshot] Complete — found ${totalFound} monitored trains, inserted ${totalInserted} new, skipped ${totalSkipped} existing, parse errors ${totalParseErrors}/${xmlDocs.length}`);
 
   } catch (err) {
     console.error('[snapshot] Error processing snapshot:', err.message);
