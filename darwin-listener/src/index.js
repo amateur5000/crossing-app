@@ -68,6 +68,13 @@ async function startListener() {
   await consumer.run({
     // Allow more time per message to avoid rebalancing during Supabase writes
     eachMessageTimeout: 30000,
+    // Commit offsets frequently so a restart never has far to catch up.
+    // Without this, KafkaJS's default batch-based commit behavior can leave
+    // a large gap between "committed offset" and "actually processed" when
+    // eachMessage does a synchronous await per message (as ours does for
+    // Supabase writes) — meaning a restart replays far more than expected.
+    autoCommitInterval: 5000,   // commit at least every 5 seconds
+    autoCommitThreshold: 100,   // or every 100 messages, whichever comes first
     eachMessage: async ({ topic, partition, message }) => {
       messageCount++;
 
